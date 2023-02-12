@@ -3,8 +3,8 @@ mod iterator;
 use pyo3::create_exception;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyInt, PyString};
-use rocksdb::{Options, DB, WriteBatch};
+use pyo3::types::{PyBytes, PyInt, PyString, PyDict};
+use rocksdb::{Options, DB, WriteBatch, DBCompressionType};
 use std::str;
 use std::sync::Arc;
 use std::time::Duration;
@@ -191,6 +191,44 @@ fn rocksdb3(_py: Python, m: &PyModule) -> PyResult<()> {
     #[pyfn(m, "open_default")]
     fn open_default(path: &str) -> PyResult<RocksDB> {
         match DB::open_default(path) {
+            Ok(db) => Ok(RocksDB {
+                db: Arc::new(db),
+                path: path.as_bytes().to_vec(),
+            }),
+            Err(e) => {
+                return Err(RocksDBError::new_err(format!(
+                    "can not open {}: {}",
+                    path, e,
+                )))
+            }
+        }
+    }
+
+    /// Opens a database with options.
+    ///
+    /// Positional arguments:
+    /// - `path` (required): Path of the database to open.
+    #[pyfn(m, "open", kwds="**")]
+    fn open(path: &str, kwds: Option<&PyDict>) -> PyResult<RocksDB> {
+        let mut opts = Options::default();
+        if let Some(kwds) = kwds {
+            if let Some(compression_type) = kwds.get_item("compression_type") {
+                if let Ok(compression_type) = compression_type.extract::<String>() {
+                    match compression_type.as_str() {
+                        "zstd" => opts.set_compression_type(DBCompressionType::Zstd),
+                        "lz4" => opts.set_compression_type(DBCompressionType::Lz4),
+                        "snappy" => opts.set_compression_type(DBCompressionType::Snappy),
+                        _ => {
+                            return Err(RocksDBError::new_err(format!(
+                                "unknown compression_type: {}",
+                                compression_type,
+                            )))
+                        }
+                    }
+                }
+            }
+        }
+        match DB::open(&opts, path) {
             Ok(db) => Ok(RocksDB {
                 db: Arc::new(db),
                 path: path.as_bytes().to_vec(),
